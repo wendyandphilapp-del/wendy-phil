@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wendy &amp; Phil</title>
+
+<!-- This is what makes it open full screen, with its icon, instead of in Safari -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Wendy &amp; Phil">
+<meta name="application-name" content="Wendy &amp; Phil">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#4B1230">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="manifest" href="manifest.json">
+
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#4B1230;overscroll-behavior:none}
+  #app{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;background:#4B1230}
+  #boot{position:fixed;inset:0;display:grid;place-items:center;font:600 22px/1.4 ui-serif,"New York",Georgia,serif;
+        color:#F6DEE8;background:linear-gradient(160deg,#4B1230,#7A2349);transition:opacity .4s}
+  #boot.gone{opacity:0;pointer-events:none}
+  /* measures the phone's safe areas, which the app inside the frame can't read */
+  #probe{position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;
+         padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+  /* the box that asks for buzzes. Only this page may ask the phone, not the app inside. */
+  #ask{position:fixed;inset:0;z-index:10;display:none;align-items:flex-end;justify-content:center;background:rgba(42,18,29,.5)}
+  #ask.on{display:flex}
+  #ask .box{width:100%;max-width:560px;background:#FBF4F5;color:#2A121D;border-radius:28px 28px 0 0;padding:26px 22px calc(26px + env(safe-area-inset-bottom,0px));
+            font:19px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+  #ask h2{font:600 28px/1.15 ui-serif,"New York",Georgia,serif;margin:0 0 8px}
+  #ask p{margin:0 0 20px;color:#5B3A4A}
+  #ask button{display:block;width:100%;min-height:58px;border:0;border-radius:18px;font:700 19px -apple-system,system-ui,sans-serif;margin-top:10px}
+  #ask .yes{background:#7A2349;color:#FFFFFF}#ask .no{background:#F6E7ED;color:#7A2349}
+  @media (prefers-color-scheme:dark){ #ask .box{background:#1A0C13;color:#F8EAF0} #ask p{color:#D9BFCB} #ask .yes{background:#F1BBD3;color:#1A0C13} #ask .no{background:#36202B;color:#F1BBD3} }
+</style>
+</head>
+<body>
+
+<div id="boot">Opening…</div>
+<div id="probe"></div>
+<div id="ask" role="dialog" aria-modal="true" aria-labelledby="askT"><div class="box"><h2 id="askT">Turn on buzzes?</h2><p>For your reminders, the bins, birthdays and your morning message. Your phone will ask you to allow it next.</p><button class="yes" id="askY">Yes, turn them on</button><button class="no" id="askN">Not now</button></div></div>
+
+<!-- PASTE THE /exec LINK BETWEEN THE QUOTES BELOW -->
+<iframe id="app" title="Wendy and Phil" src="PASTE_YOUR_EXEC_URL_HERE" allow="clipboard-write"></iframe>
+
+<script>
+(function(){
+  /* Everything here starts "wp-", so it never mixes with anything else on the same address */
+  var ME = "wp-me", PIN = "wp-pin", LAST = "wp-last", CFG = "wp-push";
+  var frame = document.getElementById("app"), boot = document.getElementById("boot"), probe = document.getElementById("probe");
+  var appWin = null;
+  function get(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }
+  function put(k, v){ try{ if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); }catch(e){} }
+  /* only listen to the app itself (Google's address), never to another page */
+  function okFrom(ev){ var o = String(ev.origin || "");
+    return /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.googleusercontent\.com$/i.test(o) || o === "https://script.google.com" || (location.protocol === "file:" && o === "null"); }
+  function reply(msg){ if (appWin) { try{ appWin.postMessage(msg, "*"); }catch(e){} } }
+  function insets(){ var cs = getComputedStyle(probe); return { top: parseFloat(cs.paddingTop) || 0, bottom: parseFloat(cs.paddingBottom) || 0 }; }
+  function sendInsets(){ var i = insets(); reply({wp:"insets", top:i.top, bottom:i.bottom}); }
+
+  /* The app lives on Google's address, where an iPhone won't reliably keep anything.
+     This page keeps whose phone it is, the code (only if they chose that), and the
+     last copy of the data, so the app opens straight away, even with no signal. */
+  window.addEventListener("message", function(ev){
+    var m = ev && ev.data;
+    if (!m || !m.wp || !ev.source || ev.source === window || !okFrom(ev)) return;
+    if (m.wp === "ready") {
+      appWin = ev.source; sendInsets();
+      var last = null; try{ last = JSON.parse(get(LAST) || "null"); }catch(e){}
+      reply({wp:"hello", me:get(ME), pin:get(PIN), remember:!!get(PIN), cached:last});
+      pushState(function(o){ o.wp = "pushstate"; reply(o); });
+      return;
+    }
+    appWin = appWin || ev.source;
+    if (m.wp === "setme" && typeof m.me === "string") put(ME, m.me);
+    if (m.wp === "setpin" && typeof m.pin === "string") put(PIN, m.pin);
+    if (m.wp === "clearpin") put(PIN, "");
+    if (m.wp === "cache") { try{ if (m.state) localStorage.setItem(LAST, JSON.stringify({state:m.state, rev:m.rev||0, base:m.base||null, dirty:!!m.dirty, who:m.who||"", at:Date.now()})); }catch(e){} }
+    if (m.wp === "buzz") { try{ if (navigator.vibrate) navigator.vibrate(12); }catch(e){} }
+    if (m.wp === "pushstate?") pushState(function(o){ o.wp = "pushstate"; reply(o); });
+    if (m.wp === "pushask" && typeof m.key === "string") { askKey = m.key; ask.classList.add("on"); }
+    if (m.wp === "settok") saveCfg({exec: frame.src, who: m.who, tok: m.tok, seen: []});
+    if (m.wp === "pushoff") {
+      try{ caches.delete(CFG); }catch(e){}
+      reg().then(function(r){ return r.pushManager.getSubscription(); }).then(function(sub){
+        var ep = sub ? sub.endpoint : ""; return (sub ? sub.unsubscribe() : true).then(function(){ reply({wp:"pushstate", state:"off", left: ep}); });
+      }).catch(function(){ reply({wp:"pushstate", state:"off"}); });
+    }
+    if (m.wp === "canback") canBack(!!m.on);
+  });
+  window.addEventListener("resize", sendInsets);
+  window.addEventListener("orientationchange", function(){ setTimeout(sendInsets, 300); });
+
+  /* ---------- buzzes ---------- */
+  var ask = document.getElementById("ask"), askKey = "";
+  function standalone(){ return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true; }
+  if ("serviceWorker" in navigator) { try{ navigator.serviceWorker.register("sw.js").catch(function(){}); }catch(e){} }
+  function reg(){
+    return new Promise(function(res, rej){
+      if (!("serviceWorker" in navigator)) return rej("nosw");
+      var t = setTimeout(function(){ rej("timeout"); }, 15000);
+      navigator.serviceWorker.getRegistration().then(function(r){ return r || navigator.serviceWorker.register("sw.js"); })
+        .then(function(){ return navigator.serviceWorker.ready; })
+        .then(function(r){ clearTimeout(t); res(r); }, function(e){ clearTimeout(t); rej(e); });
+    });
+  }
+  function whyNot(e, cb){
+    var m = String(e && e.message || e || "");
+    fetch("sw.js", {cache: "no-store"}).then(function(r){
+      if (!r.ok) return cb("This page can’t find sw.js. It needs uploading to GitHub next to index.html.");
+      if (m === "timeout") return cb("The phone didn’t finish in time. Close the app fully, open it again from its icon, and try once more.");
+      cb("The phone said no (" + m + ").");
+    }).catch(function(){ cb("No signal. Try again with a signal."); });
+  }
+  function pushState(cb){
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window))
+      return cb({state:"unsupported", why: /iPhone|iPad/.test(navigator.userAgent) && !standalone() ? "ios-tab" : "browser"});
+    if (Notification.permission === "denied") return cb({state:"denied"});
+    reg().then(function(r){ return r.pushManager.getSubscription(); })
+      .then(function(sub){ cb({state: sub && Notification.permission === "granted" ? "on" : "off"}); })
+      .catch(function(){ cb({state:"off"}); });
+  }
+  /* what the service worker needs to ask the script what to show: whose it is, and a token (never the code) */
+  function saveCfg(cfg){
+    if (!("caches" in window)) return;
+    try{ caches.open(CFG).then(function(c){ return c.put("cfg", new Response(JSON.stringify(cfg), {headers:{"Content-Type":"application/json"}})); }).catch(function(){}); }catch(e){}
+  }
+  function keyBytes(b64){ b64 = b64.replace(/-/g, "+").replace(/_/g, "/"); while (b64.length % 4) b64 += "="; var raw = atob(b64), out = new Uint8Array(raw.length); for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i); return out; }
+  document.getElementById("askN").addEventListener("click", function(){ ask.classList.remove("on"); reply({wp:"pusherr", msg:"Not now. You can turn them on in Settings any time."}); });
+  document.getElementById("askY").addEventListener("click", function(){
+    ask.classList.remove("on");
+    /* this tap is the permission request: phones only allow it straight from a tap on this page */
+    Notification.requestPermission().then(function(p){
+      if (p !== "granted") { reply({wp:"pushstate", state: p === "denied" ? "denied" : "off"}); return; }
+      return reg().then(function(r){ return r.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:keyBytes(askKey)}); })
+        .then(function(sub){ reply({wp:"pushsub", sub: sub.toJSON()}); });
+    }).catch(function(e){ whyNot(e, function(msg){ reply({wp:"pusherr", msg: msg}); }); });
+  });
+
+  /* ---------- the back button on Android: closes a panel or goes back a page ---------- */
+  var guard = false, unguarding = false;
+  function canBack(on){
+    if (on && !guard) { guard = true; try{ history.pushState({wpBack: 1}, ""); }catch(e){ guard = false; } }
+    else if (!on && guard) { guard = false; if (history.state && history.state.wpBack) { unguarding = true; history.back(); } }
+  }
+  window.addEventListener("popstate", function(){
+    if (unguarding) { unguarding = false; return; }
+    if (guard) { guard = false; reply({wp:"back"}); }
+  });
+
+  frame.addEventListener("load", function(){ boot.classList.add("gone"); });
+  setTimeout(function(){ boot.classList.add("gone"); }, 6000);
+})();
+</script>
+</body>
+</html>
