@@ -22,6 +22,14 @@
   #boot{position:fixed;inset:0;display:grid;place-items:center;font:600 22px/1.4 ui-serif,"New York",Georgia,serif;
         color:#F6DEE8;background:linear-gradient(160deg,#4B1230,#7A2349);transition:opacity .4s}
   #boot.gone{opacity:0;pointer-events:none}
+  /* shown if the app hasn't answered: Google refused it, or the link is wrong, or no signal */
+  #nope{position:fixed;inset:0;z-index:9;display:none;align-items:center;justify-content:center;padding:24px;background:linear-gradient(160deg,#4B1230,#7A2349);color:#FFF4F8;font:19px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+  #nope.on{display:flex}
+  #nope .box{max-width:460px}
+  #nope h2{font:600 30px/1.15 ui-serif,"New York",Georgia,serif;margin:0 0 10px}
+  #nope p{margin:0 0 14px;color:#F6DEE8}
+  #nope .small{font-size:16px}
+  #nope button{width:100%;min-height:58px;border:0;border-radius:18px;background:#FFF4F8;color:#4B1230;font:700 19px -apple-system,system-ui,sans-serif}
   /* measures the phone's safe areas, which the app inside the frame can't read */
   #probe{position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;
          padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -40,6 +48,7 @@
 <body>
 
 <div id="boot">Opening…</div>
+<div id="nope" role="alert"><div class="box"><h2>It didn’t open</h2><p>Google didn’t send the app. Check you have a signal, then try again. If it keeps happening, ring the person who set it up.</p><p class="small" id="nopeWhy"></p><button id="again">Try again</button></div></div>
 <div id="probe"></div>
 <div id="ask" role="dialog" aria-modal="true" aria-labelledby="askT"><div class="box"><h2 id="askT">Turn on buzzes?</h2><p>For your reminders, the bins, birthdays and your morning message. Your phone will ask you to allow it next.</p><button class="yes" id="askY">Yes, turn them on</button><button class="no" id="askN">Not now</button></div></div>
 
@@ -49,7 +58,7 @@
 <script>
 (function(){
   /* Everything here starts "wp-", so it never mixes with anything else on the same address */
-  var ME = "wp-me", PIN = "wp-pin", LAST = "wp-last", CFG = "wp-push";
+  var ME = "wp-me", PIN = "wp-pin", LAST = "wp-last", CFG = "wp-push", DEV = "wp-dev";
   var frame = document.getElementById("app"), boot = document.getElementById("boot"), probe = document.getElementById("probe");
   var appWin = null;
   function get(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }
@@ -59,6 +68,8 @@
     return /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.googleusercontent\.com$/i.test(o) || o === "https://script.google.com" || (location.protocol === "file:" && o === "null"); }
   function reply(msg){ if (appWin) { try{ appWin.postMessage(msg, "*"); }catch(e){} } }
   function insets(){ var cs = getComputedStyle(probe); return { top: parseFloat(cs.paddingTop) || 0, bottom: parseFloat(cs.paddingBottom) || 0 }; }
+  /* V2: this phone's own name for itself (random, made once), so a new phone or iPad can be asked about */
+  function devId(){ var d = get(DEV); if (/^[a-f0-9]{32}$/.test(d)) return d; var b = new Uint8Array(16); crypto.getRandomValues(b); d = ""; for (var i = 0; i < 16; i++) d += ("0" + b[i].toString(16)).slice(-2); put(DEV, d); return d; }
   function sendInsets(){ var i = insets(); reply({wp:"insets", top:i.top, bottom:i.bottom}); }
 
   /* The app lives on Google's address, where an iPhone won't reliably keep anything.
@@ -70,7 +81,7 @@
     if (m.wp === "ready") {
       appWin = ev.source; sendInsets();
       var last = null; try{ last = JSON.parse(get(LAST) || "null"); }catch(e){}
-      reply({wp:"hello", me:get(ME), pin:get(PIN), remember:!!get(PIN), cached:last});
+      reply({wp:"hello", me:get(ME), pin:get(PIN), remember:!!get(PIN), cached:last, dev:devId()});
       pushState(function(o){ o.wp = "pushstate"; reply(o); });
       return;
     }
@@ -78,6 +89,7 @@
     if (m.wp === "setme" && typeof m.me === "string") put(ME, m.me);
     if (m.wp === "setpin" && typeof m.pin === "string") put(PIN, m.pin);
     if (m.wp === "clearpin") put(PIN, "");
+    if (m.wp === "setdev" && /^[a-f0-9]{32}$/.test(m.dev || "") && !get(DEV)) put(DEV, m.dev);
     if (m.wp === "cache") { try{ if (m.state) localStorage.setItem(LAST, JSON.stringify({state:m.state, rev:m.rev||0, base:m.base||null, dirty:!!m.dirty, who:m.who||"", at:Date.now()})); }catch(e){} }
     if (m.wp === "buzz") { try{ if (navigator.vibrate) navigator.vibrate(12); }catch(e){} }
     if (m.wp === "pushstate?") pushState(function(o){ o.wp = "pushstate"; reply(o); });
@@ -152,6 +164,18 @@
   });
 
   frame.addEventListener("load", function(){ boot.classList.add("gone"); });
+  /* the app says "ready" within a second or two. If it hasn't after 15, it isn't coming: say so */
+  var src = frame.getAttribute("src") || "";
+  setTimeout(function(){
+    if (appWin) return;
+    var why = "";
+    if (/^PASTE_/.test(src)) why = "The link to the app hasn’t been pasted into this page yet.";
+    else if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(src)) why = "The link to the app should look like https://script.google.com/macros/s/…/exec, with no /u/0/ and not ending in /dev.";
+    else why = "If it never opens, Google may be refusing to show it: open the spreadsheet on a computer to check.";
+    document.getElementById("nopeWhy").textContent = why;
+    document.getElementById("nope").classList.add("on");
+  }, 15000);
+  document.getElementById("again").addEventListener("click", function(){ location.reload(); });
   setTimeout(function(){ boot.classList.add("gone"); }, 6000);
 })();
 </script>
